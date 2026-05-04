@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --aegis-green:  #00ff9d;
+  --aegis-blue:   #0ea5e9;
+  --aegis-red:    #ef4444;
+  --aegis-amber:  #f59e0b;
+  --aegis-bg:     #030712;
+  --aegis-panel:  #0f172a;
+  --aegis-border: #1e293b;
+}
+
+body {
+  background-color: var(--aegis-bg);
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.aegis-panel {
+  background: var(--aegis-panel);
+  border: 1px solid var(--aegis-border);
+  border-radius: 0.5rem;
+}
+
+.aegis-glow-green { text-shadow: 0 0 8px var(--aegis-green); }
+.aegis-glow-red   { text-shadow: 0 0 8px var(--aegis-red); }
+
+.blink {
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.scan-line {
+  background: linear-gradient(transparent 50%, rgba(0, 255, 157, 0.03) 50%);
+  background-size: 100% 4px;
+  pointer-events: none;
+}

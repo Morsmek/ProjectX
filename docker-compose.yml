@@ -1,0 +1,308 @@
+version: "3.9"
+
+networks:
+  aegis-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+  aegis-dmz:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+
+volumes:
+  blockchain-data:
+  redis-data:
+  postgres-data:
+  vdi-images:
+
+services:
+  # ─── Infrastructure ────────────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegis-postgres
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: aegis_core
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Core Services ─────────────────────────────────────────────────────────
+
+  gateway:
+    build: ./services/gateway
+    container_name: aegis-gateway
+    restart: unless-stopped
+    networks:
+      aegis-dmz:
+        ipv4_address: 172.29.0.10
+      aegis-internal:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - HERMES_URL=http://hermes:8082
+      - BLOCKCHAIN_URL=http://blockchain:8081
+      - SECRET_KEY=${SECRET_KEY}
+      - DIODE_MODE=${DIODE_MODE:-strict}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  blockchain:
+    build: ./services/blockchain
+    container_name: aegis-blockchain
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    volumes:
+      - blockchain-data:/data/chain
+    environment:
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD}@postgres:5432/aegis_core
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - NODE_KEY=${BLOCKCHAIN_NODE_KEY}
+      - VALIDATOR_KEYS=${BLOCKCHAIN_VALIDATOR_KEYS}
+      - CHAIN_ID=${CHAIN_ID:-1337}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  hermes:
+    build: ./services/hermes
+    container_name: aegis-hermes
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - BLOCKCHAIN_URL=http://blockchain:8081
+      - SDBA_URL=http://sdba:8083
+      - SECRET_KEY=${SECRET_KEY}
+      - HERMES_SIGNING_KEY=${HERMES_SIGNING_KEY}
+      - MULTISIG_THRESHOLD=${MULTISIG_THRESHOLD:-2}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  sdba:
+    build: ./services/sdba
+    container_name: aegis-sdba
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD}@postgres:5432/aegis_core
+      - HERMES_URL=http://hermes:8082
+      - SECRET_KEY=${SECRET_KEY}
+      - ANOMALY_THRESHOLD=${ANOMALY_THRESHOLD:-0.75}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  oracle:
+    build: ./services/oracle
+    container_name: aegis-oracle
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD}@postgres:5432/aegis_core
+      - BLOCKCHAIN_URL=http://blockchain:8081
+      - HERMES_URL=http://hermes:8082
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  payment:
+    build: ./services/payment
+    container_name: aegis-payment
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD}@postgres:5432/aegis_core
+      - BLOCKCHAIN_URL=http://blockchain:8081
+      - TOKEN_SIGNING_KEY=${TOKEN_SIGNING_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  mesh:
+    build: ./services/mesh
+    container_name: aegis-mesh
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - SECRET_KEY=${SECRET_KEY}
+      - MESH_NODE_ID=${MESH_NODE_ID:-node-0}
+      - KILL_SWITCH_KEY=${KILL_SWITCH_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  vdi:
+    build: ./services/vdi
+    container_name: aegis-vdi
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    volumes:
+      - vdi-images:/var/vdi
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - HERMES_URL=http://hermes:8082
+      - SECRET_KEY=${SECRET_KEY}
+      - SESSION_TTL=${VDI_SESSION_TTL:-28800}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ─── ERP Modules ───────────────────────────────────────────────────────────
+
+  munnin-note:
+    build: ./modules/munnin-note
+    container_name: aegis-munnin-note
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD}@postgres:5432/aegis_core
+      - GATEWAY_URL=http://gateway:8080
+      - PAYMENT_URL=http://payment:8085
+      - MODULE_LICENSE_KEY=${MUNNIN_LICENSE_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      payment:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  plinxx:
+    build: ./modules/plinxx
+    container_name: aegis-plinxx
+    restart: unless-stopped
+    networks:
+      - aegis-internal
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD}@postgres:5432/aegis_core
+      - GATEWAY_URL=http://gateway:8080
+      - ORACLE_URL=http://oracle:8084
+      - PAYMENT_URL=http://payment:8085
+      - MODULE_LICENSE_KEY=${PLINXX_LICENSE_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      oracle:
+        condition: service_healthy
+      payment:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ─── Frontend ──────────────────────────────────────────────────────────────
+
+  frontend:
+    build: ./frontend
+    container_name: aegis-frontend
+    restart: unless-stopped
+    networks:
+      - aegis-dmz
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_BASE=http://localhost:8080
+    depends_on:
+      - gateway
