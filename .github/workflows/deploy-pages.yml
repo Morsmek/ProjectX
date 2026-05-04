@@ -1,0 +1,43 @@
+name: Deploy Frontend → Cloudflare Pages
+
+on:
+  push:
+    branches: [main, claude/project-aegis-erp-3Q2AV]
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Inject API URL into the static HTML before upload ───────────────
+      - name: Inject runtime config
+        env:
+          AEGIS_API_URL: ${{ vars.AEGIS_API_URL }}       # set in repo Variables (not secrets)
+        run: |
+          if [ -n "$AEGIS_API_URL" ]; then
+            sed -i "s|const API = '';|const API = '${AEGIS_API_URL}';|g" frontend/index.html
+            echo "API URL set to: ${AEGIS_API_URL}"
+          else
+            echo "No AEGIS_API_URL set — running in demo mode"
+          fi
+
+      # ── Deploy to Cloudflare Pages ────────────────────────────────────────
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: project-aegis
+          directory:  frontend
+          # No build command — pure static HTML
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}

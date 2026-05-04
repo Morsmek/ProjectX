@@ -1,0 +1,96 @@
+version: "3.9"
+
+# Production override — extends docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+networks:
+  aegis-internal:
+    driver: bridge
+  aegis-dmz:
+    driver: bridge
+
+services:
+  # ── Cloudflare Tunnel (replaces exposed ports) ─────────────────────────
+  # Zero-Trust ingress: no inbound ports needed on the VPS.
+  # The tunnel connects OUT to Cloudflare, which proxies public traffic in.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: aegis-tunnel
+    restart: unless-stopped
+    networks:
+      - aegis-dmz
+      - aegis-internal
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - gateway
+
+  # ── Override gateway: don't bind to host port in prod ─────────────────
+  gateway:
+    restart: always
+    ports: []    # no host-port binding — tunnel handles ingress
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - HERMES_URL=http://hermes:8082
+      - BLOCKCHAIN_URL=http://blockchain:8081
+      - DIODE_MODE=strict
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Remove public-facing frontend container (CF Pages hosts it) ────────
+  frontend:
+    profiles: ["local-only"]    # excluded from prod stack
+
+  # ── Harden other services ─────────────────────────────────────────────
+  postgres:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  redis:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  blockchain:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  hermes:
+    restart: always
+
+  sdba:
+    restart: always
+
+  oracle:
+    restart: always
+
+  payment:
+    restart: always
+
+  mesh:
+    restart: always
+
+  vdi:
+    restart: always
+
+  munnin-note:
+    restart: always
+
+  plinxx:
+    restart: always

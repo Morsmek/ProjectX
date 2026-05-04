@@ -1,0 +1,6 @@
+# Cloudflare Pages redirect rules
+# Route all API calls through a Cloudflare Worker proxy (optional)
+# /api/*  https://your-tunnel.your-domain.com/:splat  200
+
+# SPA fallback — serve index.html for all unmatched paths
+/*  /index.html  200

@@ -1,4 +1,5 @@
-.PHONY: init build up down restart logs clean keys lint test
+.PHONY: init build up down restart logs clean keys lint test \
+        prod-up prod-down tunnel-create tunnel-route deploy-frontend
 
 COMPOSE := docker compose
 PYTHON   := python3
@@ -51,3 +52,34 @@ blackout:
 
 freeze-status:
 	@curl -s http://localhost:8084/freeze/status | python -m json.tool
+
+# ─── Production targets ────────────────────────────────────────────────────
+
+prod-up:
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+prod-down:
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.prod.yml down
+
+# Create a Cloudflare Tunnel and print the token
+# Requires: cloudflared installed and `cloudflared login` completed
+tunnel-create:
+	@echo "[Aegis] Creating Cloudflare Tunnel 'aegis-prod'…"
+	cloudflared tunnel create aegis-prod
+	@echo ""
+	@echo "Copy the tunnel ID and JSON file path shown above."
+	@echo "Then run: make tunnel-route DOMAIN=api.your-domain.com"
+
+tunnel-route:
+	@[ -n "$(DOMAIN)" ] || (echo "Usage: make tunnel-route DOMAIN=api.your-domain.com" && exit 1)
+	cloudflared tunnel route dns aegis-prod $(DOMAIN)
+	@echo "[Aegis] DNS route created: $(DOMAIN) → tunnel"
+	@echo "Add CLOUDFLARE_TUNNEL_TOKEN to .env, then: make prod-up"
+
+# Deploy frontend to Cloudflare Pages via wrangler CLI
+# Requires: npm install -g wrangler && wrangler login
+deploy-frontend:
+	@echo "[Aegis] Deploying frontend to Cloudflare Pages…"
+	cd frontend && npx wrangler pages deploy . \
+	  --project-name=project-aegis \
+	  --commit-dirty=true

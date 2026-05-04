@@ -1,0 +1,21 @@
+# Cloudflare Tunnel configuration
+# Place this at: ~/.cloudflared/config.yml on your VPS
+# OR set TUNNEL_TOKEN env var and cloudflared reads it automatically.
+#
+# Tunnel routes all public HTTPS traffic into the internal Docker network
+# via the aegis-gateway service — no inbound firewall rules needed.
+
+tunnel: <YOUR_TUNNEL_ID>       # from: cloudflared tunnel create aegis-prod
+credentials-file: /root/.cloudflared/<YOUR_TUNNEL_ID>.json
+
+ingress:
+  # Main API gateway (used by the Cloudflare Pages frontend)
+  - hostname: api.your-domain.com
+    service: http://gateway:8080
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 10s
+      httpHostHeader: api.your-domain.com
+
+  # Catch-all — reject everything else
+  - service: http_status:404
